@@ -51,7 +51,7 @@ jobs:
           docker run -d --name legalsight-frontend \
             --restart unless-stopped \
             -p 3000:3000 \
-            --env-file ~/legalsight-frontend.env \
+            --env-file ~/legalsight-frontend/.env \
             legalsight-frontend:latest
           docker image prune -f
           EOF
