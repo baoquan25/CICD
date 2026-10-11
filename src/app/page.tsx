@@ -26,7 +26,7 @@ function Auth({ onSuccess }: { onSuccess: (token: string, user: User) => void })
     <section className="auth-story">
       <div className="brand"><Scale size={24}/><span>LegalSight</span></div>
       <p className="eyebrow">VISUAL AUGMENTED GENERATION</p>
-      <h1>Đọc hồ sơ pháp lý<br/>như một chuyên viên.</h1>
+      <h1>Đọc hồ sơ pháp lý<br/>như một thằng ngu.</h1>
       <p>Textract nhận dạng tài liệu scan. OpenAI đối chiếu nội dung với ảnh gốc. Pinecone đưa đúng trang cần đọc.</p>
       <div className="trust"><Check size={16}/> Dữ liệu tách biệt theo từng tài khoản</div>
     </section>
