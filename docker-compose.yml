@@ -1,0 +1,10 @@
+services:
+  frontend:
+    build: .
+    image: legalsight-frontend:latest
+    container_name: legalsight-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - ${ENV_FILE:-.env}
