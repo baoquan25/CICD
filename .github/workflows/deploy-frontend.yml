@@ -1,0 +1,111 @@
+name: Frontend CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Lint and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  deploy:
+    name: Deploy to tanhungsoft.com
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE: legalsight-frontend:${{ github.sha }}-${{ github.run_id }}
+      SSH_TARGET: ducminh@tanhungsoft.com
+      CONTAINER: legalsight-frontend
+      DEPLOY_DIR: /home/ducminh/apps/legalsight-frontend
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          test -n "$DEPLOY_SSH_KEY"
+          test -n "$DEPLOY_KNOWN_HOSTS"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Check server prerequisites
+        run: |
+          ssh -o BatchMode=yes "$SSH_TARGET" bash -s -- "$DEPLOY_DIR" <<'REMOTE'
+          set -eu
+          deploy_dir="$1"
+          docker info >/dev/null
+          test -f "$deploy_dir/.env"
+          REMOTE
+
+      - name: Build Docker image
+        run: docker build -t "$IMAGE" .
+
+      - name: Transfer Docker image
+        run: docker save "$IMAGE" | gzip -1 | ssh -o BatchMode=yes "$SSH_TARGET" 'gzip -d | docker load'
+
+      - name: Start frontend and verify response
+        run: |
+          ssh -o BatchMode=yes "$SSH_TARGET" bash -s -- "$IMAGE" "$CONTAINER" "$DEPLOY_DIR" <<'REMOTE'
+          set -eu
+          image="$1"
+          container="$2"
+          deploy_dir="$3"
+          docker image inspect "$image" >/dev/null
+          previous_image=$(docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null || true)
+
+          start_container() {
+            docker run -d --name "$container" --restart unless-stopped \
+              --env-file "$deploy_dir/.env" \
+              --add-host=host.docker.internal:host-gateway \
+              -p 127.0.0.1:3000:3000 "$1" >/dev/null
+          }
+
+          check_container() {
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if docker exec "$container" node -e \
+                "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"; then
+                return 0
+              fi
+              sleep 2
+            done
+            return 1
+          }
+
+          docker rm -f "$container" 2>/dev/null || true
+          if ! start_container "$image" || ! check_container; then
+            docker rm -f "$container" 2>/dev/null || true
+            if [ -n "$previous_image" ]; then
+              start_container "$previous_image"
+            fi
+            exit 1
+          fi
+          REMOTE
